@@ -6,7 +6,7 @@ class Piece_Super:    #super class for all pieces
         self.side = side
         self.column = column
         self.row = row
-        self.board =  board
+        self.board = board
 
         #set position
         self.start_position = self.get_board_position(row, column)
@@ -80,7 +80,7 @@ class Pawn(Piece_Super):
         super().__init__("Pawn", side, row, column, board)
 
 
-    def move_validation(self, board, end_row, end_col):
+    def move_validation(self, board, end_row, end_col, en_passant_target = None):
         direction = -1 if self.side == "White" else 1
 
         dx = end_col - self.column
@@ -104,17 +104,49 @@ class Pawn(Piece_Super):
             if target["occupied"] and target["piece"].side != self.side:
                 return True
             
-        if self.validate_en_passant(end_row, end_col):
-            return True
-            
-        return False
-    
-    ###########################################
-    def validate_en_passant(self, old_row, old_column):
-        return False
-    ##### WIP #####
-    ##############################################
+        # en passant capture
+        if en_passant_target and (end_row, end_col) == en_passant_target:
+            if dy == direction and abs(dx) == 1:
+                if not board.board_positions[end_row][end_col]["occupied"]:
+                    behind_row = end_row - direction
+                    captured_piece = board.board_positions[behind_row][end_col]["piece"]
+                    if isinstance(captured_piece, Pawn) and captured_piece.side != self.side:
+                        return True
 
+    def get_valid_moves(self, board, ignore_check = False, en_passant_target = None):
+        moves = []
+
+        for next_row in range(8):
+            for next_col in range(8):
+                if self.move_validation(board, next_row, next_col, en_passant_target):
+                    if ignore_check:
+                       moves.append((next_row, next_col))
+                    else:
+                        old_row, old_col = self.row, self.column                                # keep track of where the piece was
+                        captured_piece = board.board_positions[next_row][next_col]["piece"]     # keep track of the piece where you are moving to
+
+                        # simulate the move
+                        board.board_positions[old_row][old_col]["piece"] = None 
+                        board.board_positions[old_row][old_col]["occupied"] = False
+
+                        self.row, self.column = next_row, next_col
+                        board.board_positions[next_row][next_col]["piece"] = self
+                        board.board_positions[next_row][next_col]["occupied"] = True
+
+                        in_check = board.is_in_check(self.side)
+
+                        self.row, self.column = old_row, old_col
+                        board.board_positions[old_row][old_col]["piece"] = self
+                        board.board_positions[old_row][old_col]["occupied"] = True
+
+                        board.board_positions[next_row][next_col]["piece"] = captured_piece
+                        board.board_positions[next_row][next_col]["occupied"] = bool(captured_piece)
+
+                        if not in_check:    # add the move if it does not put the piece in check
+                            moves.append((next_row, next_col))
+
+       
+        return moves
             
 class Rook(Piece_Super):
     def __init__(self, side, row, column, board):
@@ -148,7 +180,7 @@ class Rook(Piece_Super):
                 if r == end_row and c == end_col:
                     target = board.board_positions[r][c]
                     if target["occupied"]:
-                        if target["piece"].side == self.side:   # can't capture your own piece
+                        if target["piece"] and target["piece"].side == self.side:   # can't capture your own piece
                             return False
                     return True
                 
@@ -185,7 +217,7 @@ class Knight(Piece_Super):
             if r == end_row and c == end_col:
                 target = board.board_positions[r][c]
                 if target["occupied"]:
-                    if target["piece"].side == self.side:
+                    if target["piece"] and target["piece"].side == self.side:
                         return False
                 return True
                 
@@ -226,7 +258,7 @@ class Bishop(Piece_Super):
                 if r == end_row and c == end_col:
                     target = board.board_positions[r][c]
                     if target["occupied"]:
-                        if target["piece"].side == self.side:
+                        if target["piece"] and target["piece"].side == self.side:
                             return False
                     return True
                 
@@ -268,7 +300,7 @@ class Queen(Piece_Super):
                 if r == end_row and c == end_col:
                     target = board.board_positions[r][c]
                     if target["occupied"]:
-                        if target["piece"].side == self.side:
+                        if target["piece"] and target["piece"].side == self.side:
                             return False
                     return True
                 
@@ -290,6 +322,8 @@ class King(Piece_Super):
 
         super().__init__("King", side, row, column, board)
 
+    
+
     def move_validation(self, board, end_row, end_col):
         if self.row == end_row and self.column == end_col:
             return False
@@ -307,7 +341,7 @@ class King(Piece_Super):
             if r == end_row and c == end_col:
                 target = board.board_positions[r][c]
                 if target["occupied"]:
-                    if target["piece"].side == self.side:
+                    if target["piece"] and target["piece"].side == self.side:
                         return False
                 return True
                 
@@ -315,3 +349,89 @@ class King(Piece_Super):
                     continue
         
         return False
+    
+
+    def get_valid_moves(self, board, ignore_check=False):
+        moves = []
+        directions = [(-1,0), (1,0), (0,1), (0,-1), (-1,1), (-1,-1), (1,1), (1,-1)]
+
+        for dy, dx in directions:
+            r = self.row + dy
+            c = self.column + dx
+
+            if 0 <= r < 8 and 0 <= c < 8:
+                target = board.board_positions[r][c]
+                if not target["occupied"] or target["piece"].side != self.side:
+                    if ignore_check:
+                        moves.append((r, c))
+                    else:
+                        old_row, old_col = self.row, self.column
+                        captured_piece = board.board_positions[r][c]["piece"]
+
+                        board.board_positions[old_row][old_col]["piece"] = None
+                        self.row, self.column = r, c
+                        board.board_positions[r][c]["piece"] = self
+
+                        in_check = board.is_in_check(self.side)
+
+                        # Undo simulation
+                        self.row, self.column = old_row, old_col
+                        board.board_positions[old_row][old_col]["piece"] = self
+                        board.board_positions[r][c]["piece"] = captured_piece
+
+                        if not in_check:
+                            moves.append((r, c))
+
+        # castling
+        if not ignore_check and self.move_count == 0 and not board.is_in_check(self.side):
+            row = self.row
+
+        # Kingside (rook on col 7)
+            if isinstance(board.board_positions[row][7]["piece"], Rook):
+                rook = board.board_positions[row][7]["piece"]
+                if rook.side == self.side and rook.move_count == 0:
+                    if all(not board.board_positions[row][c]["occupied"] for c in [5, 6]):
+                        safe = True
+                        for col in [5, 6]:
+                            self.column = col
+                            board.board_positions[row][col]["piece"] = self
+                            board.board_positions[row][col]["occupied"] = True
+                            board.board_positions[self.row][4]["piece"] = None
+                            board.board_positions[self.row][4]["occupied"] = False
+                            if board.is_in_check(self.side):
+                                safe = False
+                            board.board_positions[row][col]["piece"] = None
+                            board.board_positions[row][col]["occupied"] = False
+                            board.board_positions[self.row][4]["piece"] = self
+                            board.board_positions[self.row][4]["occupied"] = True
+                            self.column = 4
+                            if not safe:
+                                break
+                        if safe:
+                            moves.append((row, 6))  # king moves to col 6
+
+            # Queenside (rook on col 0)
+            if isinstance(board.board_positions[row][0]["piece"], Rook):
+                rook = board.board_positions[row][0]["piece"]
+                if rook.side == self.side and rook.move_count == 0:
+                    if all(not board.board_positions[row][c]["occupied"] for c in [1, 2, 3]):
+                        safe = True
+                        for col in [3, 2]:
+                            self.column = col
+                            board.board_positions[row][col]["piece"] = self
+                            board.board_positions[row][col]["occupied"] = True
+                            board.board_positions[self.row][4]["piece"] = None
+                            board.board_positions[self.row][4]["occupied"] = False
+                            if board.is_in_check(self.side):
+                                safe = False
+                            board.board_positions[row][col]["piece"] = None
+                            board.board_positions[row][col]["occupied"] = False
+                            board.board_positions[self.row][4]["piece"] = self
+                            board.board_positions[self.row][4]["occupied"] = True
+                            self.column = 4
+                            if not safe:
+                                break
+                        if safe:
+                            moves.append((row, 2)) # king moves to col 2
+
+        return moves

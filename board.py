@@ -168,12 +168,36 @@ class Board:
         
         # keep track of where the piece was and where its going
         old_row, old_col = piece.row, piece.column
-        captured = self.board_positions[new_row][new_col]
+        captured_piece = self.board_positions[new_row][new_col]["piece"]
+        captured_occupied = self.board_positions[new_row][new_col]["occupied"]
+        promo_row = 0 if piece.side == "White" else 7
+        
+        # en passant
+        if isinstance(piece, Pawn) and game.en_passant_target == (new_row, new_col):
+            direction = -1 if piece.side == "White" else 1
+            captured_row = new_row - direction
+            captured_piece = self.board_positions[captured_row][new_col]["piece"]
+
+            if captured_piece:
+                if captured_piece.side == "White":
+                    self.white_pieces.remove(captured_piece)
+                else:
+                    self.black_pieces.remove(captured_piece)
+
+            if isinstance(captured_piece, Pawn) and captured_piece.side != piece.side:
+                self.board_positions[captured_row][new_col]["piece"] = None
+                self.board_positions[captured_row][new_col]["occupied"] = False
+        
+        # castling logic
+        if isinstance(piece, King) and abs(new_col - old_col) == 2:
+            rook_col = 0 if new_col < old_col else 7
+            game.handle_castling(old_row, old_col, old_row, rook_col)
+            return
         
         # change status of the old position
         self.board_positions[old_row][old_col]["occupied"] = False
         self.board_positions[old_row][old_col]["piece"] = None
-
+        
 
         piece.row = new_row     # change the pieces data
         piece.column = new_col
@@ -187,9 +211,20 @@ class Board:
             self.board_positions[old_row][old_col]["piece"] = piece
             
             self.board_positions[new_row][new_col]["occupied"] = False
-            self.board_positions[new_row][new_col]["piece"] = bool(captured)
+            self.board_positions[new_row][new_col]["piece"] = None
+
+            self.board_positions[new_row][new_col]["occupied"] = captured_occupied
+            self.board_positions[new_row][new_col]["piece"] = captured_piece
 
             return
+        
+        # pawn promotion
+        if isinstance(piece, Pawn) and new_row == promo_row:
+            game.promoting_pawn = piece
+            self.selected_piece = None
+            self.valid_moves = []
+            self.dragging = False
+            
 
         piece.move_count += 1   # increase the move count so that some moves arent possible anymore
 
@@ -216,16 +251,19 @@ class Board:
                 space = self.board_positions[row][col]
                 if space["occupied"]:
                     piece = space["piece"]
-                    # check the valid moves of all enemy pieces
-                    if piece.side != side:
-                        moves = piece.get_valid_moves(self, ignore_check=True)  
-                        if king_pos in moves:   
-                            return True 
+                    if piece and piece.side != side:
+                        if isinstance(piece, Pawn):
+                            moves = piece.get_valid_moves(self, ignore_check=True)
+                        else:
+                            moves = piece.get_valid_moves(self, ignore_check=True)
+                        if king_pos in moves:
+                            return True
+                    
 
         return False
 
     #handle mouse click
-    def handle_mouse_down(self, mouse_x, mouse_y):
+    def handle_mouse_down(self, mouse_x, mouse_y, game):
         col = (mouse_x - self.margin) // self.size
         row = (mouse_y - self.margin) // self.size
 
@@ -233,9 +271,14 @@ class Board:
             space = self.board_positions[row][col]
             if space["occupied"]:
                 self.selected_piece = space["piece"]
-                self.valid_moves = self.selected_piece.get_valid_moves(self)
-                self.dragging = True
+                if self.selected_piece.side != game.turn:
+                    return
+                if isinstance(self.selected_piece, Pawn):
+                    self.valid_moves = self.selected_piece.get_valid_moves(self, en_passant_target = game.en_passant_target)
+                else:
+                    self.valid_moves = self.selected_piece.get_valid_moves(self)
 
+                self.dragging = True
                 self.drag_offset_x = mouse_x
                 self.drag_offset_y = mouse_y
 
@@ -255,15 +298,28 @@ class Board:
 
         if 0 <= row < 8 and 0 <= col < 8:
             if (row, col) in self.valid_moves:
+                old_row = self.selected_piece.row
                 self.move_piece(self.selected_piece, row, col, game)
 
-                self.list_piece()
-                if game.is_checkmate():
-                    game.is_over = True
-                elif game.is_stalemate():
-                    game.is_over = True
-                else:
+                # set an en passant target
+                if isinstance(self.selected_piece, Pawn) and abs(row - old_row) == 2:
+                    middle_row = (row + old_row) // 2
+                    game.en_passant_target = (middle_row, col)
+
+                # promotion
+                if isinstance(self.selected_piece, Pawn) and (row == 0 or row == 7):
+                    game.promoting_pawn = self.selected_piece
                     game.switch_turn()
+                    self.selected_piece = None
+                    self.valid_moves = []
+                    self.dragging = False
+                    return
+                
+                game.switch_turn()
+                self.list_piece()
+
+                if game.is_checkmate() or game.is_stalemate():
+                    game.is_over = True
 
         self.selected_piece = None
         self.valid_moves = []
